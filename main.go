@@ -25,15 +25,15 @@ var redisPassword string
 const port = "8080"
 
 func init() {
-	redisHost = os.Getenv("REDIS_HOST")
-	if redisHost == "" {
-		log.Fatal("missing REDIS_HOST env var")
-	}
+	// redisHost = os.Getenv("REDIS_HOST")
+	// if redisHost == "" {
+	// 	log.Fatal("missing REDIS_HOST env var")
+	// }
 
-	redisPassword = os.Getenv("REDIS_PASSWORD")
-	if redisPassword == "" {
-		log.Fatal("missing REDIS_PASSWORD env var")
-	}
+	// redisPassword = os.Getenv("REDIS_PASSWORD")
+	// if redisPassword == "" {
+	// 	log.Fatal("missing REDIS_PASSWORD env var")
+	// }
 }
 
 func main() {
@@ -43,7 +43,7 @@ func main() {
 	http.Handle("/chat/", http.HandlerFunc(websocketHandler))
 	server := http.Server{Addr: ":" + port, Handler: nil}
 	go func() {
-		err := server.ListenAndServe()
+		err := server.ListenAndServeTLS("fullchain.pem", "privkey.pem")
 		if err != nil && err != http.ErrServerClosed {
 			log.Fatal("failed to start server", err)
 		}

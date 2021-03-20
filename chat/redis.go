@@ -1,9 +1,7 @@
 package chat
 
 import (
-	"crypto/tls"
 	"log"
-	"os"
 	"strings"
 
 	"github.com/go-redis/redis"
@@ -17,18 +15,22 @@ var sub *redis.PubSub
 
 func init() {
 
-	redisHost = os.Getenv("REDIS_HOST")
-	if redisHost == "" {
-		log.Fatal("missing REDIS_HOST env var")
-	}
+	// redisHost = os.Getenv("REDIS_HOST")
+	// if redisHost == "" {
+	// 	log.Fatal("missing REDIS_HOST env var")
+	// }
 
-	redisPassword = os.Getenv("REDIS_PASSWORD")
-	if redisPassword == "" {
-		log.Fatal("missing REDIS_PASSWORD env var")
-	}
+	// redisPassword = os.Getenv("REDIS_PASSWORD")
+	// if redisPassword == "" {
+	// 	log.Fatal("missing REDIS_PASSWORD env var")
+	// }
 
 	log.Println("connecting to Redis...")
-	client = redis.NewClient(&redis.Options{Addr: redisHost, Password: redisPassword, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}})
+	client = redis.NewClient(&redis.Options{
+		Addr:     "167.71.71.97:7001",
+		Password: "denis895",
+		DB:       0,
+	})
 
 	_, err := client.Ping().Result()
 	if err != nil {
