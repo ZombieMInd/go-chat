@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/abhirockzz/redis-chat-go/chat"
+	"github.com/ZombieMInd/go-chat/v0.1/src/chat"
+	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 )
 
@@ -19,8 +19,9 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
-var redisHost string
-var redisPassword string
+
+// var redisHost string
+// var redisPassword string
 
 const port = "8080"
 
@@ -37,13 +38,18 @@ func init() {
 }
 
 func main() {
-	http.HandleFunc("/", func(rw http.ResponseWriter, req *http.Request) {
+	r := mux.NewRouter()
+	r.HandleFunc("/history/{sender}/{receiver}", historyHandler)
+	r.HandleFunc("/", func(rw http.ResponseWriter, req *http.Request) {
 		rw.Write([]byte("you are good to go!"))
 	})
-	http.Handle("/chat/", http.HandlerFunc(websocketHandler))
-	server := http.Server{Addr: ":" + port, Handler: nil}
+	r.Handle("/chat/{sender}/{receiver}", http.HandlerFunc(websocketHandler))
+
+	// http.Handle("/chat/connect/", http.HandlerFunc(websocketHandler))
+	server := http.Server{Addr: ":" + port, Handler: r}
 	go func() {
-		err := server.ListenAndServeTLS("fullchain.pem", "privkey.pem")
+		// err := server.ListenAndServeTLS("fullchain.pem", "privkey.pem")
+		err := server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
 			log.Fatal("failed to start server", err)
 		}
@@ -65,13 +71,23 @@ func main() {
 }
 
 func websocketHandler(rw http.ResponseWriter, req *http.Request) {
-	user := strings.TrimPrefix(req.URL.Path, "/chat/")
+	vars := mux.Vars(req)
 
 	peer, err := upgrader.Upgrade(rw, req, nil)
 	if err != nil {
-		log.Fatal("websocket conn failed", err)
+		log.Fatal("websocket conn failed: ", err)
 	}
 
-	chatSession := chat.NewChatSession(user, peer)
+	chatSession := chat.NewChatSession(vars["sender"], vars["receiver"], peer)
 	chatSession.Start()
+}
+
+func historyHandler(rw http.ResponseWriter, req *http.Request) {
+	chatID := "chat0"
+	result := chat.GetDialogHistory(chatID, 0, 3)
+	for i, s := range result {
+		rw.Write([]byte(s))
+		rw.Write([]byte("\n"))
+		log.Println(i, s)
+	}
 }

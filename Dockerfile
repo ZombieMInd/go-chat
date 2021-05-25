@@ -9,8 +9,8 @@ COPY go.mod /app
 COPY go.sum /app
 RUN go mod download
 
-ADD chat/ /app/chat
-COPY main.go /app
+ADD src/chat/ /app/chat
+COPY src/main.go /app
 
 
 RUN cd /app && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o app

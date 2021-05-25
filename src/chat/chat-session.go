@@ -9,6 +9,7 @@ import (
 
 // Peers maps a chat user to the websocket connection (pointer)
 var Peers map[string]*websocket.Conn
+var Dialogs []string
 
 func init() {
 	Peers = map[string]*websocket.Conn{}
@@ -16,14 +17,15 @@ func init() {
 
 // ChatSession represents a connected/active chat user
 type ChatSession struct {
-	user string
-	peer *websocket.Conn
+	sender   string
+	receiver string
+	peer     *websocket.Conn
 }
 
 // NewChatSession returns a new ChatSession
-func NewChatSession(user string, peer *websocket.Conn) *ChatSession {
+func NewChatSession(sender string, receiver string, peer *websocket.Conn) *ChatSession {
 
-	return &ChatSession{user: user, peer: peer}
+	return &ChatSession{sender: sender, receiver: receiver, peer: peer}
 }
 
 const usernameHasBeenTaken = "username %s is already taken. please retry with a different name"
@@ -35,33 +37,23 @@ const left = "%s: has left the chat!"
 
 // Start starts the chat by reading messages sent by the peer and broadcasting the to redis pub-sub channel
 func (s *ChatSession) Start() {
-	usernameTaken, err := CheckUserExists(s.user)
-
+	dialog, err := FindDialog(s.sender, s.receiver)
 	if err != nil {
-		log.Println("unable to determine whether user exists -", s.user)
-		s.notifyPeer(retryMessage)
-		s.peer.Close()
-		return
+		log.Fatal(err)
 	}
 
-	if usernameTaken {
-		msg := fmt.Sprintf(usernameHasBeenTaken, s.user)
-		s.peer.WriteMessage(websocket.TextMessage, []byte(msg))
-		s.peer.Close()
-		return
-	}
+	// err = CreateUser(s.user)
+	// if err != nil {
+	// 	log.Println("failed to add user to list of active chat users", s.user)
+	// 	s.notifyPeer(retryMessage)
+	// 	s.peer.Close()
+	// 	return
+	// }
+	Dialogs = append(Dialogs, dialog)
+	Peers[s.sender] = s.peer
 
-	err = CreateUser(s.user)
-	if err != nil {
-		log.Println("failed to add user to list of active chat users", s.user)
-		s.notifyPeer(retryMessage)
-		s.peer.Close()
-		return
-	}
-	Peers[s.user] = s.peer
-
-	s.notifyPeer(fmt.Sprintf(welcome, s.user))
-	SendToChannel(fmt.Sprintf(joined, s.user))
+	// s.notifyPeer(fmt.Sprintf(welcome, s.user))
+	// SendToChannel(fmt.Sprintf(joined, s.user))
 
 	/*
 		this go-routine will exit when:
@@ -69,7 +61,8 @@ func (s *ChatSession) Start() {
 		(2) the app is closed
 	*/
 	go func() {
-		log.Println("user joined", s.user)
+		log.Println("user joined", s.sender)
+		StartSubscriber(dialog)
 		for {
 			_, msg, err := s.peer.ReadMessage()
 			if err != nil {
@@ -80,7 +73,8 @@ func (s *ChatSession) Start() {
 				}
 				return
 			}
-			SendToChannel(fmt.Sprintf(chat, s.user, string(msg)))
+			SendToChannel(dialog, fmt.Sprintf(chat, s.sender, string(msg)))
+			SaveMessage(dialog, s.sender, string(msg))
 		}
 	}()
 }
@@ -95,14 +89,10 @@ func (s *ChatSession) notifyPeer(msg string) {
 // Invoked when the user disconnects (websocket connection is closed). It performs cleanup activities
 func (s *ChatSession) disconnect() {
 	//remove user from SET
-	RemoveUser(s.user)
-
 	//notify other users that this user has left
-	SendToChannel(fmt.Sprintf(left, s.user))
-
 	//close websocket
 	s.peer.Close()
 
 	//remove from Peers
-	delete(Peers, s.user)
+	delete(Peers, s.sender)
 }

@@ -1,8 +1,11 @@
 package chat
 
 import (
+	"encoding/json"
+	"errors"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/go-redis/redis"
 	"github.com/gorilla/websocket"
@@ -27,7 +30,7 @@ func init() {
 
 	log.Println("connecting to Redis...")
 	client = redis.NewClient(&redis.Options{
-		Addr:     "167.71.71.97:7001",
+		Addr:     "localhost:6379",
 		Password: "denis895",
 		DB:       0,
 	})
@@ -37,19 +40,17 @@ func init() {
 		log.Fatal("failed to connect to redis", err)
 	}
 	log.Println("connected to redis", redisHost)
-	startSubscriber()
+
 }
 
-const channel = "chat"
-
-func startSubscriber() {
+func StartSubscriber(dialog string) {
 	/*
 		this goroutine exits when the application shuts down. When the pusub connection is closed,
 		the channel range loop terminates, hence terminating the goroutine
 	*/
 	go func() {
 		log.Println("starting subscriber...")
-		sub = client.Subscribe(channel)
+		sub = client.Subscribe(dialog)
 		messages := sub.Channel()
 		for message := range messages {
 			from := strings.Split(message.Payload, ":")[0]
@@ -64,22 +65,58 @@ func startSubscriber() {
 }
 
 // SendToChannel pusblishes on a redis pubsub channel
-func SendToChannel(msg string) {
+func SendToChannel(channel string, msg string) {
 	err := client.Publish(channel, msg).Err()
 	if err != nil {
 		log.Println("could not publish to channel", err)
 	}
 }
 
+type MessageDTO struct {
+	Time    time.Time
+	User    string
+	Message string
+}
+
+func SaveMessage(dialog string, user string, msg string) {
+	dto := MessageDTO{time.Now(), user, msg}
+	jsonDTO, err := json.Marshal(dto)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = client.LPush(dialog, jsonDTO).Err()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func GetDialogHistory(chatID string, offset int64, limit int64) []string {
+	res, err := client.LRange(chatID, offset, limit).Result()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return res
+}
+
 const users = "chat-users"
 
-// CheckUserExists checks whether the user exists in the SET of active chat users
-func CheckUserExists(user string) (bool, error) {
-	usernameTaken, err := client.SIsMember(users, user).Result()
+func FindDialog(sender string, receiver string) (string, error) {
+	dialogKey, err := client.Keys(sender + ":" + receiver).Result()
 	if err != nil {
-		return false, err
+		dialogKey, err = client.Keys(receiver + ":" + sender).Result()
+		if err != nil {
+			return "", err
+		}
 	}
-	return usernameTaken, nil
+	if len(dialogKey) > 1 {
+		return "", errors.New("More then one dialog found")
+	}
+	if len(dialogKey) == 0 {
+		return sender + ":" + receiver, nil
+	}
+	return dialogKey[0], nil
 }
 
 // CreateUser creates a new user in the SET of active chat users
@@ -103,16 +140,21 @@ func RemoveUser(user string) {
 
 // Cleanup is invoked when the app is shutdown - disconnects websocket peers, closes pusb-sub and redis client connection
 func Cleanup() {
-	for user, peer := range Peers {
-		client.SRem(users, user)
+	for _, peer := range Peers {
+		// client.SRem(users, user)
 		peer.Close()
 	}
-	log.Println("cleaned up users and sessions...")
-	err := sub.Unsubscribe(channel)
-	if err != nil {
-		log.Println("failed to unsubscribe redis channel subscription:", err)
+	for _, dialog := range Dialogs {
+		// client.SRem(users, user)
+		err := sub.Unsubscribe(dialog)
+		if err != nil {
+			log.Println("failed to unsubscribe redis channel subscription:", err)
+		}
 	}
-	err = sub.Close()
+
+	log.Println("cleaned up users and sessions...")
+
+	err := sub.Close()
 	if err != nil {
 		log.Println("failed to close redis channel subscription:", err)
 	}
