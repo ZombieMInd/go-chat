@@ -4,16 +4,9 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/ZombieMInd/go-chat/v0.1/src/db"
 	"github.com/gorilla/websocket"
 )
-
-// Peers maps a chat user to the websocket connection (pointer)
-var Peers map[string]*websocket.Conn
-var Dialogs []string
-
-func init() {
-	Peers = map[string]*websocket.Conn{}
-}
 
 // ChatSession represents a connected/active chat user
 type ChatSession struct {
@@ -37,23 +30,6 @@ const left = "%s: has left the chat!"
 
 // Start starts the chat by reading messages sent by the peer and broadcasting the to redis pub-sub channel
 func (s *ChatSession) Start() {
-	dialog, err := FindDialog(s.sender, s.receiver)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// err = CreateUser(s.user)
-	// if err != nil {
-	// 	log.Println("failed to add user to list of active chat users", s.user)
-	// 	s.notifyPeer(retryMessage)
-	// 	s.peer.Close()
-	// 	return
-	// }
-	Dialogs = append(Dialogs, dialog)
-	Peers[s.sender] = s.peer
-
-	// s.notifyPeer(fmt.Sprintf(welcome, s.user))
-	// SendToChannel(fmt.Sprintf(joined, s.user))
 
 	/*
 		this go-routine will exit when:
@@ -61,8 +37,22 @@ func (s *ChatSession) Start() {
 		(2) the app is closed
 	*/
 	go func() {
+		dialog, err := db.FindDialog(s.sender, s.receiver)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if len(dialog) == 0 {
+			dialog, err = db.CreateDialog(s.sender, s.receiver)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+		db.StartSubscriber(dialog, s.sender, s.peer)
+		// SubUserToChats(s.sender, s.peer)
+
+		db.Dialogs = append(db.Dialogs, dialog)
+
 		log.Println("user joined", s.sender)
-		StartSubscriber(dialog)
 		for {
 			_, msg, err := s.peer.ReadMessage()
 			if err != nil {
@@ -73,8 +63,10 @@ func (s *ChatSession) Start() {
 				}
 				return
 			}
-			SendToChannel(dialog, fmt.Sprintf(chat, s.sender, string(msg)))
-			SaveMessage(dialog, s.sender, string(msg))
+			db.SendToChannel(dialog, fmt.Sprintf(chat, s.sender, string(msg)))
+			db.SendToChannel(s.receiver, fmt.Sprintf(chat, s.sender, string(msg)))
+			log.Println("receiver", s.receiver)
+			db.SaveMessage(dialog, s.sender, string(msg))
 		}
 	}()
 }
@@ -94,5 +86,5 @@ func (s *ChatSession) disconnect() {
 	s.peer.Close()
 
 	//remove from Peers
-	delete(Peers, s.sender)
+	delete(db.Peers, s.sender)
 }

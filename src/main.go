@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/ZombieMInd/go-chat/v0.1/src/chat"
+	"github.com/ZombieMInd/go-chat/v0.1/src/db"
+	"github.com/ZombieMInd/go-chat/v0.1/src/notifier"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 )
@@ -39,11 +43,13 @@ func init() {
 
 func main() {
 	r := mux.NewRouter()
-	r.HandleFunc("/history/{sender}/{receiver}", historyHandler)
+	r.HandleFunc("/history/{sender}/{receiver}", historyHandler).Methods("GET", "OPTIONS")
+	r.HandleFunc("/dialogs/{user}", dialogsHandler).Methods("GET", "OPTIONS")
 	r.HandleFunc("/", func(rw http.ResponseWriter, req *http.Request) {
 		rw.Write([]byte("you are good to go!"))
 	})
 	r.Handle("/chat/{sender}/{receiver}", http.HandlerFunc(websocketHandler))
+	r.Handle("/notify/{receiver}", http.HandlerFunc(notifierHandler))
 
 	// http.Handle("/chat/connect/", http.HandlerFunc(websocketHandler))
 	server := http.Server{Addr: ":" + port, Handler: r}
@@ -64,7 +70,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	chat.Cleanup()
+	db.Cleanup()
 	server.Shutdown(ctx)
 
 	log.Println("chat app exited")
@@ -82,12 +88,58 @@ func websocketHandler(rw http.ResponseWriter, req *http.Request) {
 	chatSession.Start()
 }
 
+func notifierHandler(rw http.ResponseWriter, req *http.Request) {
+	vars := mux.Vars(req)
+
+	peer, err := upgrader.Upgrade(rw, req, nil)
+	if err != nil {
+		log.Fatal("websocket conn failed: ", err)
+	}
+
+	notifierSession := notifier.NewNotificationSession(vars["receiver"], peer)
+	notifierSession.Start()
+}
+
 func historyHandler(rw http.ResponseWriter, req *http.Request) {
-	chatID := "chat0"
-	result := chat.GetDialogHistory(chatID, 0, 3)
-	for i, s := range result {
-		rw.Write([]byte(s))
-		rw.Write([]byte("\n"))
-		log.Println(i, s)
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
+
+	rw.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	offset := 0
+	limit := 20
+	vars := mux.Vars(req)
+	offsetVal, found := mux.Vars(req)["offset"]
+	if found {
+		offset, _ = strconv.Atoi(offsetVal)
+	}
+	limitVal, found := mux.Vars(req)["limit"]
+	if found {
+		limit, _ = strconv.Atoi(limitVal)
+	}
+	dialog, err := db.FindDialog(vars["sender"], vars["receiver"])
+	if err != nil {
+		log.Fatal(err)
+	}
+	if dialog == "" {
+		http.Error(rw, "Dialog not found", 404)
+		return
+	}
+	result := db.GetDialogHistory(dialog, int64(offset), int64(limit))
+	json.NewEncoder(rw).Encode(result)
+}
+
+func dialogsHandler(rw http.ResponseWriter, req *http.Request) {
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
+
+	rw.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	vars := mux.Vars(req)
+
+	user := vars["user"]
+	result := db.GetDialogs(user)
+	log.Println("result", result)
+	err := json.NewEncoder(rw).Encode(result)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
